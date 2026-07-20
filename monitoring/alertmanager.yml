@@ -1,0 +1,118 @@
+# Alertmanager configuration for GitHub Archive System
+# Configure receivers for your organization's alerting needs
+
+global:
+  # Default SMTP settings (uncomment and configure for email alerts)
+  # smtp_smarthost: 'smtp.example.gov:587'
+  # smtp_from: 'github-archive@example.gov'
+  # smtp_auth_username: 'alertmanager'
+  # smtp_auth_password: '<your-smtp-password>'
+  
+  # Slack webhook (uncomment and configure for Slack alerts)
+  # slack_api_url: 'https://hooks.slack.com/services/YOUR/WEBHOOK/URL'
+
+  resolve_timeout: 5m
+
+# Route tree for alert routing
+route:
+  # Default receiver
+  receiver: 'default-receiver'
+  
+  # Group alerts by alertname and severity
+  group_by: ['alertname', 'severity']
+  
+  # Wait before sending first notification for a new group
+  group_wait: 30s
+  
+  # Wait before sending notification about new alerts in existing group
+  group_interval: 5m
+  
+  # Wait before resending notification
+  repeat_interval: 4h
+  
+  # Child routes for specific handling
+  routes:
+    # Critical alerts - immediate notification
+    - match:
+        severity: critical
+      receiver: 'critical-receiver'
+      group_wait: 10s
+      repeat_interval: 1h
+    
+    # Warning alerts - normal routing
+    - match:
+        severity: warning
+      receiver: 'warning-receiver'
+      group_wait: 1m
+      repeat_interval: 4h
+    
+    # Info alerts - batched daily
+    - match:
+        severity: info
+      receiver: 'info-receiver'
+      group_wait: 1h
+      repeat_interval: 24h
+
+# Receivers configuration
+receivers:
+  # Default receiver - logs to file (always configure as fallback)
+  - name: 'default-receiver'
+    webhook_configs:
+      - url: 'http://archive:8000/alerts/webhook'
+        send_resolved: true
+
+  # Critical alerts - configure with high-priority channel
+  - name: 'critical-receiver'
+    webhook_configs:
+      - url: 'http://archive:8000/alerts/webhook'
+        send_resolved: true
+    # Uncomment and configure for your organization:
+    # email_configs:
+    #   - to: 'ops-critical@example.gov'
+    #     send_resolved: true
+    # slack_configs:
+    #   - channel: '#alerts-critical'
+    #     send_resolved: true
+    #     title: '{{ .Status | toUpper }}: {{ .CommonAnnotations.summary }}'
+    #     text: '{{ .CommonAnnotations.description }}'
+
+  # Warning alerts
+  - name: 'warning-receiver'
+    webhook_configs:
+      - url: 'http://archive:8000/alerts/webhook'
+        send_resolved: true
+    # email_configs:
+    #   - to: 'ops-team@example.gov'
+    #     send_resolved: true
+    # slack_configs:
+    #   - channel: '#alerts-warning'
+    #     send_resolved: true
+
+  # Info alerts - low priority
+  - name: 'info-receiver'
+    webhook_configs:
+      - url: 'http://archive:8000/alerts/webhook'
+        send_resolved: true
+
+# Inhibition rules to prevent alert noise
+inhibit_rules:
+  # If service is down, don't send high latency alerts
+  - source_match:
+      alertname: 'ArchiveServiceDown'
+    target_match:
+      alertname: 'ArchiveServiceHighLatency'
+    equal: ['job']
+  
+  # If database is down, don't send connection alerts
+  - source_match:
+      alertname: 'DatabaseConnectionFailed'
+    target_match:
+      alertname: 'DatabaseHighConnections'
+    equal: ['job']
+  
+  # If disk is critical, suppress warning
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname']

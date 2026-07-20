@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Pre-commit hook to prevent secrets from being committed
+
+# Patterns that indicate secrets
+SECRET_PATTERNS=(
+    'password@'
+    ':password'
+    '=password'
+    'api[_-]?key\s*[=:]\s*["\x27][^"\x27]+'
+    'secret\s*[=:]\s*["\x27][^"\x27]+'
+    'token\s*[=:]\s*["\x27][^"\x27]+'
+    'ghp_[a-zA-Z0-9]{36}'      # GitHub personal access tokens
+    'gho_[a-zA-Z0-9]{36}'      # GitHub OAuth tokens
+    'github_pat_[a-zA-Z0-9_]+'  # GitHub fine-grained PATs
+    'PRIVATE KEY'
+    'BEGIN RSA'
+    'BEGIN DSA'
+    'BEGIN EC'
+    'BEGIN OPENSSH'
+)
+
+# Files to always check
+CHECK_EXTENSIONS="py|yml|yaml|sh|sql|json|md|txt|env|conf|cfg|ini|toml"
+
+# Files to skip
+SKIP_PATTERNS=(
+    '.env.example'
+    'pre-commit'
+    '.gitignore'
+)
+
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+found_secrets=0
+
+# Get list of staged files
+staged_files=$(git diff --cached --name-only --diff-filter=ACM)
+
+for file in $staged_files; do
+    # Skip if file matches skip patterns
+    skip=0
+    for pattern in "${SKIP_PATTERNS[@]}"; do
+        if [[ "$file" == *"$pattern"* ]]; then
+            skip=1
+            break
+        fi
+    done
+    
+    if [[ $skip -eq 1 ]]; then
+        continue
+    fi
+    
+    # Check if file exists and is a text file
+    if [[ ! -f "$file" ]]; then
+        continue
+    fi
+    
+    # Check each secret pattern
+    for pattern in "${SECRET_PATTERNS[@]}"; do
+        matches=$(grep -inE "$pattern" "$file" 2>/dev/null || true)
+        if [[ -n "$matches" ]]; then
+            # Filter out example/placeholder values
+            real_matches=$(echo "$matches" | grep -ivE 'example|placeholder|change-this|your-.*-here|xxx|<.*>' || true)
+            if [[ -n "$real_matches" ]]; then
+                echo -e "${RED}POTENTIAL SECRET DETECTED${NC} in ${YELLOW}$file${NC}:"
+                echo "$real_matches" | head -5
+                echo ""
+                found_secrets=1
+            fi
+        fi
+    done
+done
+
+if [[ $found_secrets -eq 1 ]]; then
+    echo -e "${RED}========================================${NC}"
+    echo -e "${RED}COMMIT BLOCKED: Potential secrets found${NC}"
+    echo -e "${RED}========================================${NC}"
+    echo ""
+    echo "If these are intentional (e.g., example placeholders), you can:"
+    echo "  1. Use placeholder values like 'your-secret-here' or '<SECRET>'"
+    echo "  2. Add the file to SKIP_PATTERNS in .git/hooks/pre-commit"
+    echo "  3. Bypass with: git commit --no-verify (NOT RECOMMENDED)"
+    echo ""
+    exit 1
+fi
+
+exit 0

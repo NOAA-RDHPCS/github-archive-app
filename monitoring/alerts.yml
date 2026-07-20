@@ -1,0 +1,184 @@
+# Prometheus alerting rules for GitHub Archive System
+
+groups:
+  - name: github-archive-service
+    rules:
+      # Service availability
+      - alert: ArchiveServiceDown
+        expr: up{job="github-archive"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GitHub Archive service is down"
+          description: "The GitHub Archive service has been unreachable for more than 5 minutes."
+
+      - alert: ArchiveServiceHighLatency
+        expr: histogram_quantile(0.95, rate(github_archive_request_duration_seconds_bucket[5m])) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High latency in Archive service"
+          description: "95th percentile latency is above 2 seconds for the last 10 minutes."
+
+      # Event processing
+      - alert: NoEventsReceived
+        expr: increase(github_archive_events_total[2h]) == 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No webhook events received"
+          description: "No GitHub webhook events have been received in the last 2 hours."
+
+      - alert: HighErrorRate
+        expr: rate(github_archive_errors_total[5m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate in archive service"
+          description: "Error rate is above 0.1/s for the last 10 minutes."
+
+      - alert: SignatureVerificationFailures
+        expr: increase(github_archive_signature_failures_total[1h]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Multiple signature verification failures"
+          description: "More than 10 webhook signature verification failures in the last hour. Possible attack or misconfiguration."
+
+      - alert: IPBlockedEvents
+        expr: increase(github_archive_ip_blocked_total[1h]) > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Many requests blocked by IP allowlist"
+          description: "More than 50 requests blocked by IP allowlist in the last hour. May indicate attack or GitHub IP list out of date."
+
+  - name: github-archive-database
+    rules:
+      # Database connectivity
+      - alert: DatabaseConnectionFailed
+        expr: github_archive_database_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connection failed"
+          description: "The archive service cannot connect to PostgreSQL."
+
+      # Database performance
+      - alert: DatabaseHighConnections
+        expr: pg_stat_activity_count > 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High database connection count"
+          description: "PostgreSQL connection count is above 80."
+
+      - alert: DatabaseReplicationLag
+        expr: pg_replication_lag > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database replication lag"
+          description: "PostgreSQL replication lag is above 60 seconds."
+
+      # Database storage
+      - alert: DatabaseSizeGrowthHigh
+        expr: increase(pg_database_size_bytes{datname="github_archive"}[1d]) > 5368709120
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "High database growth"
+          description: "Database has grown by more than 5GB in the last 24 hours."
+
+  - name: github-archive-infrastructure
+    rules:
+      # Disk space
+      - alert: DiskSpaceLow
+        expr: node_filesystem_avail_bytes{mountpoint=~"/var/lib/github-archive.*"} < 10737418240
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low disk space"
+          description: "Less than 10GB disk space remaining on {{ $labels.mountpoint }}."
+
+      - alert: DiskSpaceCritical
+        expr: node_filesystem_avail_bytes{mountpoint=~"/var/lib/github-archive.*"} < 2147483648
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical disk space"
+          description: "Less than 2GB disk space remaining on {{ $labels.mountpoint }}."
+
+      # Memory
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is above 90% for the last 10 minutes."
+
+      # CPU
+      - alert: HighCPUUsage
+        expr: 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is above 80% for the last 15 minutes."
+
+  - name: github-archive-integrity
+    rules:
+      # Integrity checks
+      - alert: IntegrityCheckFailed
+        expr: github_archive_integrity_check_status == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Integrity check failed"
+          description: "The last integrity verification found corrupted or missing records."
+
+      - alert: IntegrityCheckOverdue
+        expr: time() - github_archive_integrity_check_timestamp > 604800
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Integrity check overdue"
+          description: "No integrity check has been run in the last 7 days."
+
+  - name: github-archive-backup
+    rules:
+      # Backup monitoring
+      - alert: BackupOverdue
+        expr: time() - github_archive_last_backup_timestamp > 172800
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Backup overdue"
+          description: "No successful backup has been completed in the last 48 hours."
+
+      - alert: BackupFailed
+        expr: github_archive_last_backup_status == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backup failed"
+          description: "The last backup attempt failed."

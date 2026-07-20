@@ -1,0 +1,42 @@
+# Traefik Static Configuration
+# GitHub Archive System
+
+api:
+  dashboard: false
+  insecure: false
+
+log:
+  level: INFO
+  format: json
+
+accessLog:
+  format: json
+  filters:
+    statusCodes:
+      - "200-299"
+      - "400-599"
+
+entryPoints:
+  websecure:
+    address: ":8443"
+    http:
+      tls: true
+  metrics:
+    address: ":9090"
+
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: github-archive
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+metrics:
+  prometheus:
+    entryPoint: metrics
+    addEntryPointsLabels: true
+    addServicesLabels: true
+
+# TLS configuration is handled via dynamic config based on TLS_MODE

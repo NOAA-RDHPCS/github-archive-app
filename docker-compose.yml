@@ -1,0 +1,149 @@
+# GitHub Archive System - Docker Compose Configuration
+# Single-server deployment with optional HA overlay
+
+services:
+  # ==========================================================================
+  # Traefik Reverse Proxy
+  # Handles TLS termination, IP allowlisting, and routing
+  # ==========================================================================
+  traefik:
+    image: traefik:v3.0
+    container_name: github-archive-traefik
+    restart: unless-stopped
+    ports:
+      - "${WEBHOOK_PORT:-8443}:8443"
+      - "${METRICS_PORT:-9090}:9090"
+    volumes:
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
+      - ./certs:/etc/traefik/certs:ro
+      - traefik-acme:/etc/traefik/acme
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+      - TLS_MODE=${TLS_MODE:-selfsigned}
+      - ACME_EMAIL=${ACME_EMAIL:-}
+    networks:
+      - github-archive
+    labels:
+      - "traefik.enable=false"
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ==========================================================================
+  # Archive Service
+  # FastAPI application for webhook processing
+  # ==========================================================================
+  archive:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: github-archive-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-github_archive}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-github_archive}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - ALLOWED_ORGS=${ALLOWED_ORGS}
+      - IP_ALLOWLIST_MODE=${IP_ALLOWLIST_MODE:-github}
+      - CUSTOM_ALLOWED_IPS=${CUSTOM_ALLOWED_IPS:-}
+      - GITHUB_IP_UPDATE_INTERVAL=${GITHUB_IP_UPDATE_INTERVAL:-6}
+      - READ_API_ENABLED=${READ_API_ENABLED:-true}
+      - READ_API_AUTH_REQUIRED=${READ_API_AUTH_REQUIRED:-false}
+      - READ_API_KEY=${READ_API_KEY:-}
+      - READ_API_MAX_RESULTS=${READ_API_MAX_RESULTS:-1000}
+      - ARCHIVE_PATH=/var/lib/github-archive/json
+      - METRICS_ENABLED=${METRICS_ENABLED:-true}
+    volumes:
+      - archive-json:/var/lib/github-archive/json
+    networks:
+      - github-archive
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.archive.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.archive.entrypoints=websecure"
+      - "traefik.http.routers.archive.tls=true"
+      - "traefik.http.routers.archive.middlewares=github-ip-allowlist@file"
+      - "traefik.http.services.archive.loadbalancer.server.port=8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+  # ==========================================================================
+  # PostgreSQL Database
+  # Immutable storage with append-only triggers
+  # ==========================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: github-archive-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-github_archive}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-github_archive}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks:
+      - github-archive
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-github_archive} -d ${POSTGRES_DB:-github_archive}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================================================
+  # GitHub IP Updater
+  # Periodically updates the GitHub IP allowlist
+  # ==========================================================================
+  ip-updater:
+    image: curlimages/curl:latest
+    container_name: github-archive-ip-updater
+    restart: unless-stopped
+    depends_on:
+      - archive
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        while true; do
+          echo "Updating GitHub IPs..."
+          curl -s -X POST "http://archive:8000/admin/update-github-ips" \
+            -H "X-API-Key: ${READ_API_KEY:-}" || echo "Failed to update IPs"
+          sleep ${GITHUB_IP_UPDATE_INTERVAL:-6}h
+        done
+    networks:
+      - github-archive
+
+# ==========================================================================
+# Networks
+# ==========================================================================
+networks:
+  github-archive:
+    driver: bridge
+
+# ==========================================================================
+# Volumes
+# ==========================================================================
+volumes:
+  postgres-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${POSTGRES_DATA_PATH:-/var/lib/github-archive/postgres}
+  archive-json:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${ARCHIVE_PATH:-/var/lib/github-archive/json}
+  traefik-acme:

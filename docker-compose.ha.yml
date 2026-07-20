@@ -1,0 +1,128 @@
+# High-Availability Overlay for GitHub Archive System
+# Use with: docker-compose -f docker-compose.yml -f docker-compose.ha.yml up -d
+
+services:
+  # ==========================================================================
+  # Primary PostgreSQL (override base config)
+  # ==========================================================================
+  postgres:
+    container_name: github-archive-postgres-primary
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-github_archive}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-github_archive}
+      # Replication settings
+      - POSTGRES_REPLICATION_USER=${POSTGRES_REPLICATION_USER:-replicator}
+      - POSTGRES_REPLICATION_PASSWORD=${POSTGRES_REPLICATION_PASSWORD}
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=3
+      - -c
+      - max_replication_slots=3
+      - -c
+      - hot_standby=on
+    volumes:
+      - postgres-primary-data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./db/init-replication.sh:/docker-entrypoint-initdb.d/02-replication.sh:ro
+
+  # ==========================================================================
+  # PostgreSQL Replica
+  # ==========================================================================
+  postgres-replica:
+    image: postgres:16-alpine
+    container_name: github-archive-postgres-replica
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - PGUSER=${POSTGRES_REPLICATION_USER:-replicator}
+      - PGPASSWORD=${POSTGRES_REPLICATION_PASSWORD}
+    command:
+      - bash
+      - -c
+      - |
+        # Wait for primary
+        until pg_isready -h postgres -p 5432; do
+          echo "Waiting for primary..."
+          sleep 2
+        done
+        
+        # Initialize replica from primary if not already done
+        if [ ! -f /var/lib/postgresql/data/PG_VERSION ]; then
+          pg_basebackup -h postgres -D /var/lib/postgresql/data -U replicator -Fp -Xs -P -R
+        fi
+        
+        # Start postgres in standby mode
+        exec postgres
+    volumes:
+      - postgres-replica-data:/var/lib/postgresql/data
+    networks:
+      - github-archive
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-github_archive}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================================================
+  # Additional Archive Instance (load balanced)
+  # ==========================================================================
+  archive-2:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: github-archive-app-2
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-github_archive}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-github_archive}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - ALLOWED_ORGS=${ALLOWED_ORGS}
+      - IP_ALLOWLIST_MODE=${IP_ALLOWLIST_MODE:-github}
+      - CUSTOM_ALLOWED_IPS=${CUSTOM_ALLOWED_IPS:-}
+      - READ_API_ENABLED=${READ_API_ENABLED:-true}
+      - READ_API_AUTH_REQUIRED=${READ_API_AUTH_REQUIRED:-false}
+      - READ_API_KEY=${READ_API_KEY:-}
+      - READ_API_MAX_RESULTS=${READ_API_MAX_RESULTS:-1000}
+      - ARCHIVE_PATH=/var/lib/github-archive/json
+    volumes:
+      - archive-json:/var/lib/github-archive/json
+    networks:
+      - github-archive
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.archive.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.archive.entrypoints=websecure"
+      - "traefik.http.routers.archive.tls=true"
+      - "traefik.http.routers.archive.middlewares=github-ip-allowlist@file"
+      - "traefik.http.services.archive.loadbalancer.server.port=8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+# ==========================================================================
+# Additional Volumes for HA
+# ==========================================================================
+volumes:
+  postgres-primary-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${POSTGRES_DATA_PATH:-/var/lib/github-archive/postgres-primary}
+  postgres-replica-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${POSTGRES_REPLICA_DATA_PATH:-/var/lib/github-archive/postgres-replica}

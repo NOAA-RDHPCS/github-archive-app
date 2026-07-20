@@ -1,0 +1,46 @@
+# Traefik Dynamic Configuration
+# IP Allowlist and TLS settings
+
+http:
+  middlewares:
+    # GitHub IP Allowlist Middleware
+    # This list is periodically updated by the ip-updater service
+    # Initial list from: https://api.github.com/meta (hooks key)
+    github-ip-allowlist:
+      ipAllowList:
+        sourceRange:
+          # GitHub Webhook IPs (as of 2024 - these change, use ip-updater)
+          - "192.30.252.0/22"
+          - "185.199.108.0/22"
+          - "140.82.112.0/20"
+          - "143.55.64.0/20"
+          # IPv6
+          - "2a0a:a440::/29"
+          - "2606:50c0::/32"
+          # Add custom IPs below if needed
+          # - "10.0.0.0/8"  # Example: internal network
+
+    # Rate limiting (optional, uncomment if needed)
+    # rate-limit:
+    #   rateLimit:
+    #     average: 100
+    #     burst: 200
+    #     period: 1m
+
+tls:
+  options:
+    default:
+      minVersion: VersionTLS12
+      cipherSuites:
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+        - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+
+  # Self-signed certificate (default)
+  # Replace with your own certificates for production
+  certificates:
+    - certFile: /etc/traefik/certs/server.crt
+      keyFile: /etc/traefik/certs/server.key
