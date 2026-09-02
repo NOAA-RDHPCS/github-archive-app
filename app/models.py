@@ -72,7 +72,7 @@ class ContentVersion(Base):
     title = Column(Text)
     body = Column(Text)
     state = Column(String(64))
-    metadata = Column(JSONB, nullable=False, default=dict)
+    event_metadata = Column(JSONB, nullable=False, default=dict)
     
     # Actor
     actor_login = Column(String(255), nullable=False)
