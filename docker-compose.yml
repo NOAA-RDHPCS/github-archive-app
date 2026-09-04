@@ -8,6 +8,9 @@ services:
   # ==========================================================================
   traefik:
     image: traefik:v3.0
+    #Disables SELinux label separation for this container
+    security_opt:
+        - label:disable
     container_name: github-archive-traefik
     restart: unless-stopped
     ports:
@@ -18,7 +21,7 @@ services:
       - ./traefik/dynamic:/etc/traefik/dynamic:ro
       - ./certs:/etc/traefik/certs:ro
       - traefik-acme:/etc/traefik/acme
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${XDG_RUNTIME_DIR}/podman/podman.socket:/var/run/docker.sock:ro
     environment:
       - DOMAIN=${DOMAIN:-localhost}
       - TLS_MODE=${TLS_MODE:-selfsigned}
