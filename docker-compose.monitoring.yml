@@ -18,7 +18,7 @@ services:
       - '--storage.tsdb.retention.time=30d'
       - '--web.enable-lifecycle'
     ports:
-      - "9090:9090"
+      - "9094:9090"
     networks:
       - github-archive
     restart: unless-stopped

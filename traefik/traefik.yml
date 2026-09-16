@@ -33,10 +33,14 @@ providers:
     directory: /etc/traefik/dynamic
     watch: true
 
+
+
 metrics:
   prometheus:
     entryPoint: metrics
     addEntryPointsLabels: true
     addServicesLabels: true
+
+ping: {}
 
 # TLS configuration is handled via dynamic config based on TLS_MODE

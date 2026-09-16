@@ -8,6 +8,12 @@ services:
   # ==========================================================================
   traefik:
     image: traefik:v3.0
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--api.insecure=false"
+      #ensure ping is enabled for healthcheck
+      - "--ping=true"
     #Disables SELinux label separation for this container
     security_opt:
         - label:disable
@@ -31,7 +37,7 @@ services:
     labels:
       - "traefik.enable=false"
     healthcheck:
-      test: ["CMD", "traefik", "healthcheck"]
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -53,7 +59,12 @@ services:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-github_archive}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-github_archive}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET}
       - ALLOWED_ORGS=${ALLOWED_ORGS}
-      - IP_ALLOWLIST_MODE=${IP_ALLOWLIST_MODE:-github}
+      #- IP_ALLOWLIST_MODE=${IP_ALLOWLIST_MODE:-github}
+      # App sees request.client.host, which is always Traefik's internal IP
+      # (uvicorn isn't started with --proxy-headers and main.py doesn't trust
+      # X-Forwarded-For). Traefik's github-ip-allowlist@file middleware is the
+      # real, correctly-sourced IP gate. Disabled the redundant app-level
+      # check instead of having it 403 every legitimate delivery.
       - CUSTOM_ALLOWED_IPS=${CUSTOM_ALLOWED_IPS:-}
       - GITHUB_IP_UPDATE_INTERVAL=${GITHUB_IP_UPDATE_INTERVAL:-6}
       - READ_API_ENABLED=${READ_API_ENABLED:-true}
@@ -71,6 +82,8 @@ services:
       - "traefik.http.routers.archive.rule=PathPrefix(`/`)"
       - "traefik.http.routers.archive.entrypoints=websecure"
       - "traefik.http.routers.archive.tls=true"
+      #ensure archive app and traefik are on same docker network to prevent any routing errors
+      - "traefik.docker.network=github-archive"
       - "traefik.http.routers.archive.middlewares=github-ip-allowlist@file"
       - "traefik.http.services.archive.loadbalancer.server.port=8000"
     healthcheck:
@@ -106,26 +119,34 @@ services:
   # ==========================================================================
   # GitHub IP Updater
   # Periodically updates the GitHub IP allowlist
+  # Periodically refreshes Traefik's github-ip-allowlist middleware file.
+  # (Previously this only POSTed to the app's /admin endpoint, which refreshes
+  # a Postgres table nothing in Traefik reads. That left the file Traefik
+  # actually enforces, traefik/dynamic/github-ips.yml, stuck at whatever
+  # setup.sh wrote once during initial install.)
   # ==========================================================================
   ip-updater:
-    image: curlimages/curl:latest
+    image: alpine:3.19
     container_name: github-archive-ip-updater
     restart: unless-stopped
     depends_on:
       - archive
     entrypoint: /bin/sh
     command:
-      - -c
-      - |
-        while true; do
-          echo "Updating GitHub IPs..."
-          curl -s -X POST "http://archive:8000/admin/update-github-ips" \
-            -H "X-API-Key: ${READ_API_KEY:-}" || echo "Failed to update IPs"
-          sleep ${GITHUB_IP_UPDATE_INTERVAL:-6}h
-        done
-    networks:
-      - github-archive
-
+       - -c
+       - |
+        apk add --no-cache curl jq bash
+         while true; do
+          echo "Updating GitHub IPs for Traefik..."
+          OUTPUT_FILE=/etc/traefik/dynamic/github-ips.yml bash /scripts/update-github-ips.sh \
+            || echo "Failed to update IPs"
+           sleep ${GITHUB_IP_UPDATE_INTERVAL:-6}h
+         done
+    volumes:
+      - ./scripts/update-github-ips.sh:/scripts/update-github-ips.sh:ro
+      - ./traefik/dynamic:/etc/traefik/dynamic
+     networks:
+       - github-archive
 # ==========================================================================
 # Networks
 # ==========================================================================

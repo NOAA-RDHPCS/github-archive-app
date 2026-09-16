@@ -17,11 +17,11 @@ check_requirements() {
     
     local missing=()
     
-    if ! command -v docker &> /dev/null; then
+    if ! command -v podman &> /dev/null; then
         missing+=("docker")
     fi
     
-    if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+    if ! command -v podman-compose &> /dev/null && ! podman compose version &> /dev/null; then
         missing+=("docker-compose")
     fi
     

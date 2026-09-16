@@ -10,13 +10,8 @@ OUTPUT_FILE="${OUTPUT_FILE:-$SCRIPT_DIR/../traefik/dynamic/github-ips.yml}"
 echo "Fetching GitHub webhook IP ranges..."
 
 # Fetch from GitHub API
-IPS=$(curl -s https://api.github.com/meta | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-hooks = data.get('hooks', [])
-for ip in hooks:
-    print(f'          - \"{ip}\"')
-")
+IPS=$(curl -s https://api.github.com/meta | jq -r '.hooks[] | "          - \"" + . + "\""')
+
 
 if [ -z "$IPS" ]; then
     echo "ERROR: Could not fetch GitHub IPs"
