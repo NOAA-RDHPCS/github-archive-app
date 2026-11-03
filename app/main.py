@@ -263,6 +263,33 @@ async def metrics(db: AsyncSession = Depends(get_db)):
         return f"# Error generating metrics: {e}"
 
 
+
+# =============================================================================
+# ALERT ENDPOINT
+# =============================================================================
+@app.post("/alerts/webhook")
+async def receive_alerts(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    token = os.environ.get("ALERT_WEBHOOK_TOKEN", "")
+    if not token:
+        raise HTTPException(status_code=503, detail="Alert receiver not configured")
+
+    if not hmac.compare_digest(authorization or "", f"Bearer {token}"):
+        raise HTTPException(status_code=401, detail="Invalid alert token")
+
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    if not isinstance(payload, dict) or not isinstance(payload.get("alerts"), list):
+        raise HTTPException(status_code=422, detail="Expected an alerts array")
+
+    logger.info("Alertmanager notification: %s", json.dumps(payload))
+    return {"received": len(payload["alerts"])}
+
 # =============================================================================
 # WEBHOOK ENDPOINT
 # =============================================================================
