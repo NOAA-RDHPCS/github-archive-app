@@ -10,10 +10,32 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid 1000 --shell /bin/bash --create-home appuser
 
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN set -eux; \
+    # 1. Swap http for https in the new DEB822-format configuration file
+    sed -i 's|http://|https://|g' /etc/apt/sources.list.d/debian.sources; \
+    \
+    # 2. Update the cache using the new HTTPS URIs and immediately install ca-certificates
+    #    (Note: Debian base images usually bundle ca-certificates, but installing explicitly guarantees verification)
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates; \
+    \
+    # 3. Proceed with your standard python package/system dependencies
+    apt-get install -y --no-install-recommends \
+        curl \
+        build-essential; \
+    \
+    # 4. Clean up cache layers to keep the slim image optimized
+    rm -rf /var/lib/apt/lists/*
+
+
 # Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+#RUN apt-get update && apt-get install -y --no-install-recommends \
+#    curl \
+#    && rm -rf /var/lib/apt/lists/*
+
 
 # Set working directory
 WORKDIR /app

@@ -81,6 +81,10 @@ receivers:
     webhook_configs:
       - url: 'http://archive:8000/alerts/webhook'
         send_resolved: true
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /run/secrets/alert-webhook-token
     # email_configs:
     #   - to: 'ops-team@example.gov'
     #     send_resolved: true

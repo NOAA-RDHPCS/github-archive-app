@@ -59,6 +59,7 @@ services:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-github_archive}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-github_archive}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET}
       - ALLOWED_ORGS=${ALLOWED_ORGS}
+      - ALERT_WEBHOOK_TOKEN=${ALERT_WEBHOOK_TOKEN}
       #- IP_ALLOWLIST_MODE=${IP_ALLOWLIST_MODE:-github}
       # App sees request.client.host, which is always Traefik's internal IP
       # (uvicorn isn't started with --proxy-headers and main.py doesn't trust
@@ -159,11 +160,6 @@ networks:
 # ==========================================================================
 volumes:
   postgres-data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${POSTGRES_DATA_PATH:-/var/lib/github-archive/postgres}
   archive-json:
     driver: local
     driver_opts:
